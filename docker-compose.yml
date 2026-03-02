@@ -1,0 +1,99 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - '2181:2181'
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - '9092:9092'
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+  mongo-a:
+    image: mongo:6
+    container_name: mongo-a
+    restart: always
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: taurus
+    volumes:
+      - mongo_a_data:/data/db
+  mongo-b:
+    image: mongo:6
+    container_name: mongo-b
+    restart: always
+    ports:
+      - '27018:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: taurus
+    volumes:
+      - mongo_b_data:/data/db
+  postgres-a:
+    image: postgres:15
+    container_name: postgres-a
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: main
+    ports:
+      - '5431:5432'
+    volumes:
+      - postgres_a_data:/var/lib/postgresql/data
+    networks:
+      - postgres_a_network
+  postgres-b:
+    image: postgres:15
+    container_name: postgres-b
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: main
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_b_data:/var/lib/postgresql/data
+    networks:
+      - postgres_b_network
+
+volumes:
+  rabbitmq_data:
+  mongo_a_data:
+  mongo_b_data:
+  postgres_a_data:
+  postgres_b_data:
+
+networks:
+  postgres_a_network:
+    driver: bridge
+  postgres_b_network:
+    driver: bridge
