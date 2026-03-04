@@ -2,6 +2,7 @@ import {
   HttpException,
   Inject,
   Injectable,
+  OnApplicationBootstrap,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
@@ -15,24 +16,27 @@ import { Consumer } from 'kafkajs';
 import { Logger } from '@nestjs/common';
 import { RabbitMQService } from './rabbitMQ/services';
 import * as amqp from 'amqplib';
-
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
 import { MongoService, PostgresService } from './databases/services';
+import { TenantEntity, TenantRepo } from './models/pogress';
 
 type AERROR = {
   name: string;
 };
 
+interface IProducerMessage {
+  tenant: string;
+  event: string;
+  data: string;
+}
+
 @Injectable()
-export class AppService implements OnModuleInit, OnModuleDestroy {
+export class AppService implements OnModuleDestroy {
   private logger = new Logger(AppService.name);
   private consumer: Consumer | null = null;
-
   private rabbitMQConnection: amqp.Connection | null = null;
   private rabbitMQChannel: amqp.Channel | null = null;
+
   constructor(
-    @Inject(CACHE_MANAGER) private memoryCache: Cache,
     private readonly kafkaProducerService: KafkaProducerService,
     private readonly kafkaConsumerService: KafkaConsumerService,
     private readonly rabbitMQService: RabbitMQService,
@@ -40,24 +44,29 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     private readonly postgresService: PostgresService,
   ) {}
 
-  async onModuleInit() {
-    // await this.startRabbitMQ();
-    // await this.startKafkaConsumer();
-  }
-
   async onModuleDestroy() {
-    // await this.stopRabbitMQ();
-    // await this.stopKafkaConsumer();
+    await this.stopRabbitMQ();
+    await this.stopKafkaConsumer();
   }
 
   async getMongo(tenant: string) {
     const TenantModel = await this.mongoService.TenantModel(tenant);
-    return TenantModel.find().exec();
+    const findAll = await TenantModel.find().exec();
+    return findAll.map((m) => m.tenant);
   }
 
   async getPostgres(tenant: string) {
-    const tenantRepo = await this.postgresService.tenantRepo(tenant);
-    return tenantRepo.find();
+    const repoCustom = await this.postgresService.getRepo(TenantRepo, tenant);
+    const repoEntity = await this.postgresService.getEntity(
+      TenantEntity,
+      tenant,
+    );
+    const findAll = await repoEntity.find({ select: ['tenant'] });
+    const findNameAll = await repoCustom.getTenantNames();
+    return {
+      entity: findAll.map((m) => m.tenant),
+      repo: findNameAll.map((m) => m.tenant),
+    };
   }
 
   error() {
@@ -75,10 +84,33 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     throw new CustomError<AERROR>('Invalid custom', 501, error);
   }
 
-  onMessage(data: KafkaCallBack) {
-    const { topic, message } = data;
-    const log = topic + ' : ' + message;
-    this.logger.log(log);
+  async onMessage(source: KafkaCallBack) {
+    try {
+      const { topic, message } = source;
+      const { tenant, event, data } = JSON.parse(message) as IProducerMessage;
+      const log =
+        '[OnMessage] Topic : ' +
+        topic +
+        ' Tenant : ' +
+        tenant +
+        ' Event : ' +
+        event;
+      this.logger.log(log);
+      switch (event) {
+        case 'LIST-TENANT-MONGO':
+          const mongo = await this.getMongo(tenant);
+          console.log('mongo', mongo);
+          break;
+        case 'LIST-TENANT-POSGRES':
+          const posgres = await this.getPostgres(tenant);
+          console.log('posgres', posgres);
+          break;
+        default:
+          break;
+      }
+    } catch (error) {
+      this.logger.error(error);
+    }
   }
 
   async startKafkaConsumer() {
@@ -98,7 +130,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       eachMessage: async ({ topic, message }) => {
         const value = message.value?.toString();
         if (!value) return;
-        this.onMessage({ topic, message: value });
+        await this.onMessage({ topic, message: value });
       },
     });
     this.consumer = consumer;
@@ -111,10 +143,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async kafkaProducer() {
+  async kafkaProducer(tenant: string) {
     const config = { brokers: ['localhost:9092'], logLevel: 0 };
     const topic = 'test';
-    const message = 'test-non';
+    const data: IProducerMessage = {
+      tenant,
+      event: 'LIST-TENANT-POSGRES',
+      data: 'test',
+    };
+    const message = JSON.stringify(data);
     return this.kafkaProducerService.send(config, topic, message);
   }
 
@@ -128,21 +165,27 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     this.rabbitMQConnection = connect;
     this.rabbitMQChannel = channel;
     for (const queue of queues) {
-      await this.rabbitMQChannel.consume(queue, (msg) => {
+      await this.rabbitMQChannel.consume(queue, async (msg) => {
         if (!msg) return;
         const data = msg.content.toString() as string;
-        this.onMessage({ topic: queue, message: data });
+        await this.onMessage({ topic: queue, message: data });
         this.rabbitMQChannel.ack(msg);
       });
     }
     this.logger.log(`RabbitMQ Consumer started. Topics: ${queues.join(', ')}`);
   }
 
-  async rabbitMQProducer() {
+  async rabbitMQProducer(tenant: string) {
     if (this.rabbitMQChannel) {
+      const data: IProducerMessage = {
+        tenant,
+        event: 'LIST-TENANT-MONGO',
+        data: 'test',
+      };
+      const message = JSON.stringify(data);
       return await this.rabbitMQChannel.sendToQueue(
         'test',
-        Buffer.from('hi hi'),
+        Buffer.from(message),
       );
     }
   }
@@ -156,10 +199,5 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       this.rabbitMQChannel = null;
       this.rabbitMQConnection = null;
     }
-  }
-
-  async setDatabaseConfigOnMemory() {
-    await this.memoryCache.set('posgress', 'a');
-    await this.memoryCache.set('mongo', 'a');
   }
 }

@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Repository,
+  DataSource,
+} from 'typeorm';
 
 @Entity({ name: 'tenants' })
 export class TenantEntity {
@@ -25,4 +31,15 @@ export class TenantEntity {
 
   @Column({})
   schema: string;
+}
+
+export class TenantRepo extends Repository<TenantEntity> {
+  constructor(dataSource: DataSource) {
+    const manager = dataSource.manager;
+    super(TenantEntity, manager, manager.queryRunner);
+  }
+  async getTenantNames() {
+    return this.find({ select: ['tenant'] });
+  }
+  // * Custom query in this
 }

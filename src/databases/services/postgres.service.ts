@@ -1,9 +1,13 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Cache } from 'cache-manager';
-import { TenantEntity, type PostgresTenantType } from 'src/models/pogress';
+import {
+  TenantEntity,
+  TenantRepo,
+  type PostgresTenantType,
+} from 'src/models/pogress';
 import { MAIN_POSTGRES_CONFIG } from '../postgres.module';
-import { DataSource, EntityTarget, ObjectLiteral, Repository } from 'typeorm';
+import { DataSource, EntityTarget, ObjectLiteral } from 'typeorm';
 
 const entities = [TenantEntity];
 
@@ -36,9 +40,8 @@ export class PostgresService {
         synchronize: false,
       });
       await dataSource.initialize();
-      const record = await dataSource
-        .getRepository(TenantEntity)
-        .findOne({ where: { tenant: tenant } });
+      const tenantRepo = new TenantRepo(dataSource);
+      const record = await tenantRepo.findOne({ where: { tenant: tenant } });
       if (!record) {
         throw Error('Not found config postgres');
       }
@@ -69,15 +72,16 @@ export class PostgresService {
     return dataSource;
   }
 
-  async getRepo<T extends ObjectLiteral>(
-    model: EntityTarget<T>,
-    tenant?: string,
-  ): Promise<Repository<T>> {
+  async getRepo<T>(repo: new (ds: DataSource) => T, tenant?: string) {
     const ds = await this.getDataSourceForTenant(tenant);
-    return ds.getRepository<T>(model);
+    return new repo(ds);
   }
 
-  async tenantRepo(tenant?: string) {
-    return this.getRepo<TenantEntity>(TenantEntity, tenant);
+  async getEntity<T extends ObjectLiteral>(
+    entity: EntityTarget<T>,
+    tenant?: string,
+  ) {
+    const ds = await this.getDataSourceForTenant(tenant);
+    return ds.getRepository<T>(entity);
   }
 }

@@ -46,12 +46,12 @@ export class AppController {
 
   @Get('/kafka-producer')
   kafkaProducer() {
-    return this.appService.kafkaProducer();
+    return this.appService.kafkaProducer(this.tenant);
   }
 
   @Get('/mq-producer')
   mqProducer() {
-    return this.appService.rabbitMQProducer();
+    return this.appService.rabbitMQProducer(this.tenant);
   }
 
   @Get('/mq-consumer-start')
